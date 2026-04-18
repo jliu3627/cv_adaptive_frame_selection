@@ -1,0 +1,9 @@
+numpy==1.26.4
+pandas==2.2.2
+matplotlib==3.8.4
+opencv-python==4.9.0.80
+scikit-learn==1.4.2
+scipy==1.11.4
+tqdm==4.66.4
+PyYAML==6.0.1
+ultralytics==8.2.103

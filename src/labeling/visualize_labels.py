@@ -1,13 +1,11 @@
 from pathlib import Path
 import cv2
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
 
-def draw_gt_boxes(image, gt_df):
-    """
-    Draw GT boxes with track IDs.
-    """
+def draw_gt_boxes(image: np.ndarray, gt_df: pd.DataFrame):
     output = image.copy()
 
     for _, row in gt_df.iterrows():
@@ -19,10 +17,8 @@ def draw_gt_boxes(image, gt_df):
 
         label = f"id {track_id}"
 
-        # Bounding box
         cv2.rectangle(output, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-        # Label size
         (text_w, text_h), baseline = cv2.getTextSize(
             label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
         )
@@ -30,7 +26,6 @@ def draw_gt_boxes(image, gt_df):
         text_x = x1
         text_y = max(y1 - 8, text_h + 4)
 
-        # Text background
         cv2.rectangle(
             output,
             (text_x, text_y - text_h - 4),
@@ -39,7 +34,6 @@ def draw_gt_boxes(image, gt_df):
             thickness=-1,
         )
 
-        # Text
         cv2.putText(
             output,
             label,
@@ -54,7 +48,7 @@ def draw_gt_boxes(image, gt_df):
     return output
 
 
-def draw_label_overlay(image, row):
+def draw_label_overlay(image: np.ndarray, row: pd.Series):
     """
     Draw frame-level KEEP/SKIP label and GT-based debug info.
     """
@@ -67,7 +61,6 @@ def draw_label_overlay(image, row):
 
     h, w = output.shape[:2]
 
-    # Top banner
     cv2.rectangle(output, (0, 0), (w, 75), banner_color, thickness=-1)
 
     cv2.putText(
@@ -119,7 +112,6 @@ def draw_label_overlay(image, row):
     for i, text in enumerate(debug_lines):
         y = start_y + i * 28
 
-        # black outline
         cv2.putText(
             output,
             text,
@@ -130,7 +122,7 @@ def draw_label_overlay(image, row):
             3,
             cv2.LINE_AA,
         )
-        # white text
+
         cv2.putText(
             output,
             text,
@@ -145,7 +137,7 @@ def draw_label_overlay(image, row):
     return output
 
 
-def visualize_sequence_with_gt_and_labels(
+def visualize_labels(
     sequence_dir: Path,
     gt_csv: Path,
     labels_csv: Path,
@@ -182,6 +174,7 @@ def visualize_sequence_with_gt_and_labels(
 
     label_lookup = {int(row["frame"]): row for _, row in labels_df.iterrows()}
 
+    # image sequence
     image_paths = sorted(img_dir.glob("*.jpg"))
     if not image_paths:
         raise FileNotFoundError(f"No images found in {img_dir}")
@@ -191,6 +184,7 @@ def visualize_sequence_with_gt_and_labels(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # image visualization
     for img_path in tqdm(image_paths, desc=f"GT label vis {sequence_dir.name}"):
         frame_id = int(img_path.stem)
 
@@ -216,7 +210,6 @@ def visualize_sequence_with_gt_and_labels(
                 cv2.LINE_AA,
             )
 
-        # Add quick GT count in corner
         count_text = f"GT boxes: {len(frame_gt)}"
         cv2.putText(
             vis_image,
@@ -233,52 +226,3 @@ def visualize_sequence_with_gt_and_labels(
         cv2.imwrite(str(out_path), vis_image)
 
     print(f"Saved GT label visualizations to {output_dir}")
-
-
-def main():
-    base_dir = Path("data/raw/MOT17/train")
-    gt_dir = Path("data/interim/gt_annotations")
-    labels_dir = Path("data/interim/labels_gt")
-    output_base = Path("data/interim/gt_label_visualizations")
-
-    sequences = [
-        "MOT17-02-DPM",
-        "MOT17-02-FRCNN",
-        "MOT17-02-SDP",
-        "MOT17-04-DPM",
-        "MOT17-04-FRCNN",
-        "MOT17-04-SDP",
-        "MOT17-05-DPM",
-        "MOT17-05-FRCNN",
-        "MOT17-05-SDP",
-        "MOT17-09-DPM",
-        "MOT17-09-FRCNN",
-        "MOT17-09-SDP",
-        "MOT17-10-DPM",
-        "MOT17-10-FRCNN",
-        "MOT17-10-SDP",
-        "MOT17-11-DPM",
-        "MOT17-11-FRCNN",
-        "MOT17-11-SDP",
-        "MOT17-13-DPM",
-        "MOT17-13-FRCNN",
-        "MOT17-13-SDP",
-    ]
-
-    for seq_name in sequences:
-        sequence_dir = base_dir / seq_name
-        gt_csv = gt_dir / f"{seq_name}_gt.csv"
-        labels_csv = labels_dir / f"{seq_name}_labels.csv"
-        output_dir = output_base / seq_name
-
-        visualize_sequence_with_gt_and_labels(
-            sequence_dir=sequence_dir,
-            gt_csv=gt_csv,
-            labels_csv=labels_csv,
-            output_dir=output_dir,
-            max_frames=None,   # set to None for all frames
-        )
-
-
-if __name__ == "__main__":
-    main()

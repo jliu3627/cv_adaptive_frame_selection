@@ -1,10 +1,11 @@
 from pathlib import Path
 import cv2
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
 
-def draw_gt_boxes(image, frame_df):
+def draw_gt_boxes(image: np.ndarray, frame_df: pd.DataFrame):
     output = image.copy()
 
     for _, row in frame_df.iterrows():
@@ -48,7 +49,7 @@ def draw_gt_boxes(image, frame_df):
     return output
 
 
-def visualize_gt_for_sequence(
+def visualize_gt(
     sequence_dir: Path,
     gt_csv: Path,
     output_dir: Path,
@@ -63,12 +64,14 @@ def visualize_gt_for_sequence(
 
     df = pd.read_csv(gt_csv)
 
+    # image sequence
     image_paths = sorted(img_dir.glob("*.jpg"))
     if max_frames is not None:
         image_paths = image_paths[:max_frames]
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # image visualization
     for img_path in tqdm(image_paths, desc=f"GT vis {sequence_dir.name}"):
         frame_id = int(img_path.stem)
 
@@ -94,49 +97,3 @@ def visualize_gt_for_sequence(
         cv2.imwrite(str(out_path), vis_image)
 
     print(f"Saved GT visualizations to {output_dir}")
-
-
-def main():
-    base_dir = Path("data/raw/MOT17/train")
-    gt_dir = Path("data/interim/gt_annotations")
-    output_base = Path("data/interim/gt_visualizations")
-
-    sequences = [
-        "MOT17-02-DPM",
-        "MOT17-02-FRCNN",
-        "MOT17-02-SDP",
-        "MOT17-04-DPM",
-        "MOT17-04-FRCNN",
-        "MOT17-04-SDP",
-        "MOT17-05-DPM",
-        "MOT17-05-FRCNN",
-        "MOT17-05-SDP",
-        "MOT17-09-DPM",
-        "MOT17-09-FRCNN",
-        "MOT17-09-SDP",
-        "MOT17-10-DPM",
-        "MOT17-10-FRCNN",
-        "MOT17-10-SDP",
-        "MOT17-11-DPM",
-        "MOT17-11-FRCNN",
-        "MOT17-11-SDP",
-        "MOT17-13-DPM",
-        "MOT17-13-FRCNN",
-        "MOT17-13-SDP",
-    ]
-
-    for seq_name in sequences:
-        sequence_dir = base_dir / seq_name
-        gt_csv = gt_dir / f"{seq_name}_gt.csv"
-        output_dir = output_base / seq_name
-
-        visualize_gt_for_sequence(
-            sequence_dir=sequence_dir,
-            gt_csv=gt_csv,
-            output_dir=output_dir,
-            max_frames=None,
-        )
-
-
-if __name__ == "__main__":
-    main()

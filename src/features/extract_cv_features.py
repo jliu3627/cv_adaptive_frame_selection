@@ -5,7 +5,7 @@ import pandas as pd
 from tqdm import tqdm
 
 
-def load_grayscale(image_path: Path) -> np.ndarray:
+def load_grayscale(image_path: Path):
     image = cv2.imread(str(image_path))
     if image is None:
         raise FileNotFoundError(f"Could not read image: {image_path}")
@@ -13,7 +13,7 @@ def load_grayscale(image_path: Path) -> np.ndarray:
     return gray
 
 
-def compute_frame_difference(prev_gray: np.ndarray, curr_gray: np.ndarray) -> dict:
+def compute_frame_difference(prev_gray: np.ndarray, curr_gray: np.ndarray):
     diff = cv2.absdiff(prev_gray, curr_gray)
     return {
         "frame_diff_mean": float(np.mean(diff)),
@@ -21,7 +21,7 @@ def compute_frame_difference(prev_gray: np.ndarray, curr_gray: np.ndarray) -> di
     }
 
 
-def compute_optical_flow_features(prev_gray: np.ndarray, curr_gray: np.ndarray) -> dict:
+def compute_optical_flow_features(prev_gray: np.ndarray, curr_gray: np.ndarray):
     flow = cv2.calcOpticalFlowFarneback(
         prev_gray,
         curr_gray,
@@ -43,7 +43,7 @@ def compute_optical_flow_features(prev_gray: np.ndarray, curr_gray: np.ndarray) 
     }
 
 
-def compute_edge_difference(prev_gray: np.ndarray, curr_gray: np.ndarray) -> dict:
+def compute_edge_difference(prev_gray: np.ndarray, curr_gray: np.ndarray):
     prev_edges = cv2.Canny(prev_gray, 100, 200)
     curr_edges = cv2.Canny(curr_gray, 100, 200)
 
@@ -56,7 +56,7 @@ def compute_edge_difference(prev_gray: np.ndarray, curr_gray: np.ndarray) -> dic
     }
 
 
-def compute_histogram_difference(prev_gray: np.ndarray, curr_gray: np.ndarray) -> dict:
+def compute_histogram_difference(prev_gray: np.ndarray, curr_gray: np.ndarray):
     prev_hist = cv2.calcHist([prev_gray], [0], None, [32], [0, 256])
     curr_hist = cv2.calcHist([curr_gray], [0], None, [32], [0, 256])
 
@@ -81,7 +81,7 @@ def compute_histogram_difference(prev_gray: np.ndarray, curr_gray: np.ndarray) -
     }
 
 
-def extract_features_for_pair(prev_img_path: Path, curr_img_path: Path) -> dict:
+def extract_features_for_pair(prev_img_path: Path, curr_img_path: Path):
     prev_gray = load_grayscale(prev_img_path)
     curr_gray = load_grayscale(curr_img_path)
 
@@ -110,11 +110,12 @@ def extract_features_for_sequence(
     if "frame" not in labels_df.columns or "label" not in labels_df.columns:
         raise ValueError(f"Labels CSV must contain 'frame' and 'label': {labels_csv}")
 
+    # image sequence
     image_paths = sorted(img_dir.glob("*.jpg"))
     if len(image_paths) < 2:
         raise ValueError(f"Need at least 2 frames in {img_dir}")
 
-    # Frame -> full label row lookup
+    # frame -> full label row lookup
     label_lookup = {
         int(row["frame"]): row.to_dict()
         for _, row in labels_df.iterrows()
@@ -122,6 +123,7 @@ def extract_features_for_sequence(
 
     rows = []
 
+    # image features
     for i in tqdm(range(1, len(image_paths)), desc=f"Features {sequence_dir.name}"):
         prev_img_path = image_paths[i - 1]
         curr_img_path = image_paths[i]
@@ -140,19 +142,7 @@ def extract_features_for_sequence(
             "label": int(label_row["label"]),
         }
 
-        # Optional: carry over GT debug columns for later analysis
-        # debug_cols = [
-        #     "prev_count",
-        #     "curr_count",
-        #     "num_common_ids",
-        #     "num_appeared",
-        #     "num_disappeared",
-        #     "count_changed",
-        #     "max_center_displacement",
-        #     "motion_flag",
-        # ]
-
-        # NOTE: new columns
+        # NOTE: columns from label generation
         debug_cols = [
             "prev_count",
             "curr_count",
@@ -182,37 +172,15 @@ def extract_features_for_sequence(
 
 def main():
     base_dir = Path("data/raw/MOT17/train")
-    labels_dir = Path("data/interim/labels_gt")
-    output_dir = Path("data/processed/features_gt")
+    gt_labels_dir = Path("data/interim/gt_label")
+    feature_output_dir = Path("data/processed/features")
 
-    sequences = [
-        "MOT17-02-DPM",
-        "MOT17-02-FRCNN",
-        "MOT17-02-SDP",
-        "MOT17-04-DPM",
-        "MOT17-04-FRCNN",
-        "MOT17-04-SDP",
-        "MOT17-05-DPM",
-        "MOT17-05-FRCNN",
-        "MOT17-05-SDP",
-        "MOT17-09-DPM",
-        "MOT17-09-FRCNN",
-        "MOT17-09-SDP",
-        "MOT17-10-DPM",
-        "MOT17-10-FRCNN",
-        "MOT17-10-SDP",
-        "MOT17-11-DPM",
-        "MOT17-11-FRCNN",
-        "MOT17-11-SDP",
-        "MOT17-13-DPM",
-        "MOT17-13-FRCNN",
-        "MOT17-13-SDP",
-    ]
+    sequences = [Path(gt_csv).stem.split("_")[0] for gt_csv in gt_labels_dir.glob("*.csv")]
 
     for seq_name in sequences:
         sequence_dir = base_dir / seq_name
-        labels_csv = labels_dir / f"{seq_name}_labels.csv"
-        output_csv = output_dir / f"{seq_name}_features.csv"
+        labels_csv = gt_labels_dir / f"{seq_name}_labels.csv"
+        output_csv = feature_output_dir / f"{seq_name}_features.csv"
 
         extract_features_for_sequence(
             sequence_dir=sequence_dir,

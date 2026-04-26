@@ -1,15 +1,18 @@
 from pathlib import Path
 import math
+import os
 import pandas as pd
+from tqdm import tqdm
+from visualize_labels import visualize_labels
 
 
-def compute_box_center(row):
+def compute_box_center(row: pd.Series):
     cx = (row["x1"] + row["x2"]) / 2.0
     cy = (row["y1"] + row["y2"]) / 2.0
     return cx, cy
 
 
-def compute_center_distance(row_prev, row_curr):
+def compute_center_distance(row_prev: pd.Series, row_curr: pd.Series):
     cx_prev, cy_prev = compute_box_center(row_prev)
     cx_curr, cy_curr = compute_box_center(row_curr)
 
@@ -49,7 +52,7 @@ def generate_labels_for_sequence_from_gt(
 
     rows = []
 
-    # First frame is always keep
+    # first frame is always keep
     first_frame = frames[0]
     first_df = df[df["frame"] == first_frame].copy()
     first_ids = set(first_df["track_id"].astype(int).tolist())
@@ -69,7 +72,8 @@ def generate_labels_for_sequence_from_gt(
         }
     )
 
-    for prev_frame, curr_frame in zip(frames[:-1], frames[1:]):
+    # compare frame t-1 and t
+    for prev_frame, curr_frame in tqdm(list(zip(frames[:-1], frames[1:])), desc=f"Labels {gt_csv.name}"):
         prev_df = df[df["frame"] == prev_frame].copy()
         curr_df = df[df["frame"] == curr_frame].copy()
 
@@ -79,6 +83,7 @@ def generate_labels_for_sequence_from_gt(
         prev_ids = set(prev_df["track_id"].tolist())
         curr_ids = set(curr_df["track_id"].tolist())
 
+        # frame information
         common_ids = prev_ids & curr_ids
         appeared_ids = curr_ids - prev_ids
         disappeared_ids = prev_ids - curr_ids
@@ -99,39 +104,18 @@ def generate_labels_for_sequence_from_gt(
 
         motion_flag = int(max_center_displacement > motion_threshold)
 
-        keep = int(
-            count_changed
-            or len(appeared_ids) > 0
-            or len(disappeared_ids) > 0
-            or motion_flag > 0
-        )
-
         # NOTE: tune label generation here
         significant_count_change = int(abs(curr_count - prev_count) >= 1)
         significant_appearance = int(len(appeared_ids) >= 1)
         significant_disappearance = int(len(disappeared_ids) >= 1)
 
+        # determine keep or skip frame
         keep = int(
             significant_count_change
             or significant_appearance
             or significant_disappearance
             or motion_flag > 0
         )
-
-        # rows.append(
-        #     {
-        #         "frame": curr_frame,
-        #         "label": keep,
-        #         "prev_count": prev_count,
-        #         "curr_count": curr_count,
-        #         "num_common_ids": len(common_ids),
-        #         "num_appeared": len(appeared_ids),
-        #         "num_disappeared": len(disappeared_ids),
-        #         "count_changed": count_changed,
-        #         "max_center_displacement": max_center_displacement,
-        #         "motion_flag": motion_flag,
-        #     }
-        # )
         
         rows.append(
             {
@@ -159,47 +143,27 @@ def generate_labels_for_sequence_from_gt(
 
 
 def main():
+    base_dir = Path("data/raw/MOT17/train")
     gt_dir = Path("data/interim/gt_annotations")
-    output_dir = Path("data/interim/labels_gt")
+    labels_output_dir = Path("data/interim/gt_label")
+    visual_output_dir = Path("data/interim/gt_label_visualizations")
 
-    # sequences = [
-    #     "MOT17-09-SDP", # NOTE: Ok
-    #     # "MOT17-10-SDP", # NOTE: Not good
-    #     # "MOT17-11-SDP", # NOTE: Good
-    # ]
-
-    sequences = [
-        "MOT17-02-DPM",
-        "MOT17-02-FRCNN",
-        "MOT17-02-SDP",
-        "MOT17-04-DPM",
-        "MOT17-04-FRCNN",
-        "MOT17-04-SDP",
-        "MOT17-05-DPM",
-        "MOT17-05-FRCNN",
-        "MOT17-05-SDP",
-        "MOT17-09-DPM",
-        "MOT17-09-FRCNN",
-        "MOT17-09-SDP",
-        "MOT17-10-DPM",
-        "MOT17-10-FRCNN",
-        "MOT17-10-SDP",
-        "MOT17-11-DPM",
-        "MOT17-11-FRCNN",
-        "MOT17-11-SDP",
-        "MOT17-13-DPM",
-        "MOT17-13-FRCNN",
-        "MOT17-13-SDP",
-    ]
+    sequences = [Path(gt_csv).stem.split("_")[0] for gt_csv in gt_dir.glob("*.csv")]
 
     for seq_name in sequences:
         gt_csv = gt_dir / f"{seq_name}_gt.csv"
-        output_csv = output_dir / f"{seq_name}_labels.csv"
+        output_csv = labels_output_dir / f"{seq_name}_labels.csv"
 
         generate_labels_for_sequence_from_gt(
             gt_csv=gt_csv,
             output_csv=output_csv,
-            motion_threshold=20.0, # NOTE: tune parameter here
+            motion_threshold=20.0, # NOTE: tune motion parameter here
+        )
+        visualize_labels(
+            sequence_dir=base_dir / seq_name,
+            gt_csv=gt_csv,
+            labels_csv=output_csv,
+            output_dir=visual_output_dir / seq_name,
         )
 
 

@@ -35,36 +35,13 @@ def load_feature_data(feature_paths):
 
 
 def main():
-    feature_paths = [
-        "data/processed/features_gt/MOT17-02-DPM_features.csv",
-        "data/processed/features_gt/MOT17-02-FRCNN_features.csv",
-        "data/processed/features_gt/MOT17-02-SDP_features.csv",
-        "data/processed/features_gt/MOT17-04-DPM_features.csv",
-        "data/processed/features_gt/MOT17-04-FRCNN_features.csv",
-        "data/processed/features_gt/MOT17-04-SDP_features.csv",
-        "data/processed/features_gt/MOT17-05-DPM_features.csv",
-        "data/processed/features_gt/MOT17-05-FRCNN_features.csv",
-        "data/processed/features_gt/MOT17-05-SDP_features.csv",
-        "data/processed/features_gt/MOT17-09-DPM_features.csv",
-        "data/processed/features_gt/MOT17-09-FRCNN_features.csv",
-        "data/processed/features_gt/MOT17-09-SDP_features.csv",
-        "data/processed/features_gt/MOT17-10-DPM_features.csv",
-        "data/processed/features_gt/MOT17-10-FRCNN_features.csv",
-        "data/processed/features_gt/MOT17-10-SDP_features.csv",
-        "data/processed/features_gt/MOT17-11-DPM_features.csv",
-        "data/processed/features_gt/MOT17-11-FRCNN_features.csv",
-        "data/processed/features_gt/MOT17-11-SDP_features.csv",
-        "data/processed/features_gt/MOT17-13-DPM_features.csv",
-        "data/processed/features_gt/MOT17-13-FRCNN_features.csv",
-        "data/processed/features_gt/MOT17-13-SDP_features.csv",
-    ]
-
-    output_dir = Path("outputs/models/random_forest_gt")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    feature_dir = Path("data/processed/features")
+    model_output_dir = Path("outputs/models/random_forest")
+    
+    feature_paths = feature_dir.glob("*.csv")
+    model_output_dir.mkdir(parents=True, exist_ok=True)
 
     df = load_feature_data(feature_paths)
-
-    # Drop any rows with missing values
     df = df.dropna().reset_index(drop=True)
 
     feature_cols = [
@@ -85,7 +62,6 @@ def main():
     X = df[feature_cols]
     y = df[target_col]
 
-    # Keep label balance roughly consistent across split
     X_train, X_test, y_train, y_test, idx_train, idx_test = train_test_split(
         X,
         y,
@@ -95,15 +71,6 @@ def main():
         stratify=y,
     )
 
-    # model = RandomForestClassifier(
-    #     n_estimators=300,
-    #     max_depth=None,
-    #     min_samples_split=2,
-    #     min_samples_leaf=1,
-    #     class_weight="balanced",
-    #     random_state=42,
-    #     n_jobs=-1,
-    # )
     model = RandomForestClassifier(
         n_estimators=500,
         max_depth=10,
@@ -116,8 +83,7 @@ def main():
 
     model.fit(X_train, y_train)
 
-    # y_pred = model.predict(X_test)
-    # y_prob = model.predict_proba(X_test)[:, 1]
+    # NOTE: tune decision threshold here
     y_prob = model.predict_proba(X_test)[:, 1]
     decision_threshold = 0.55
     y_pred = (y_prob >= decision_threshold).astype(int)
@@ -139,7 +105,7 @@ def main():
         "decision_threshold": decision_threshold,
     }
 
-    with open(output_dir / "metrics.json", "w") as f:
+    with open(model_output_dir / "metrics.json", "w") as f:
         json.dump(metrics, f, indent=4)
 
     importances = pd.DataFrame(
@@ -149,7 +115,7 @@ def main():
         }
     ).sort_values(by="importance", ascending=False)
 
-    importances.to_csv(output_dir / "feature_importance.csv", index=False)
+    importances.to_csv(model_output_dir / "feature_importance.csv", index=False)
 
     # Save test predictions with useful context
     results_df = df.loc[idx_test].copy()
@@ -157,16 +123,16 @@ def main():
     results_df["y_true"] = y_test.reset_index(drop=True)
     results_df["y_pred"] = y_pred
     results_df["y_prob_keep"] = y_prob
-    results_df.to_csv(output_dir / "test_predictions.csv", index=False)
+    results_df.to_csv(model_output_dir / "test_predictions.csv", index=False)
 
     # Save model
-    joblib.dump(model, output_dir / "random_forest_gt_model.joblib")
+    joblib.dump(model, model_output_dir / "random_forest_gt_model.joblib")
 
     print("Training complete.")
-    print(f"Saved model to: {output_dir / 'random_forest_gt_model.joblib'}")
-    print(f"Saved metrics to: {output_dir / 'metrics.json'}")
-    print(f"Saved feature importances to: {output_dir / 'feature_importance.csv'}")
-    print(f"Saved test predictions to: {output_dir / 'test_predictions.csv'}")
+    print(f"Saved model to: {model_output_dir / 'random_forest_gt_model.joblib'}")
+    print(f"Saved metrics to: {model_output_dir / 'metrics.json'}")
+    print(f"Saved feature importances to: {model_output_dir / 'feature_importance.csv'}")
+    print(f"Saved test predictions to: {model_output_dir / 'test_predictions.csv'}")
 
     print("\n=== Test Metrics ===")
     print(f"Accuracy : {metrics['accuracy']:.4f}")

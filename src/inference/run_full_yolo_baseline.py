@@ -77,27 +77,13 @@ def main():
     output_dir = Path("outputs/full_yolo_baseline_gt/json")
 
     sequences = [
-        "MOT17-02-DPM",
         "MOT17-02-FRCNN",
-        "MOT17-02-SDP",
-        "MOT17-04-DPM",
         "MOT17-04-FRCNN",
-        "MOT17-04-SDP",
-        "MOT17-05-DPM",
         "MOT17-05-FRCNN",
-        "MOT17-05-SDP",
-        "MOT17-09-DPM",
         "MOT17-09-FRCNN",
-        "MOT17-09-SDP",
-        "MOT17-10-DPM",
         "MOT17-10-FRCNN",
-        "MOT17-10-SDP",
-        "MOT17-11-DPM",
         "MOT17-11-FRCNN",
-        "MOT17-11-SDP",
-        "MOT17-13-DPM",
         "MOT17-13-FRCNN",
-        "MOT17-13-SDP",
     ]
 
     yolo_model = YOLO("yolov8n.pt")
@@ -113,6 +99,31 @@ def main():
             yolo_conf_thresh=0.25,
         )
 
+    # test dataset
+    base_dir = Path("data/raw/MOT17/test")
+    output_dir = Path("outputs/test/full_yolo_baseline/json")
+
+    sequences = sorted([p.name for p in base_dir.iterdir() if p.is_dir() and "FRCNN" in p.name])
+
+    for seq_name in sequences:
+        sequence_dir = base_dir / seq_name
+        img_dir = sequence_dir / "img1"
+        image_paths = sorted(img_dir.glob("*.jpg"))
+
+        full_detections = {}
+
+        for image_path in tqdm(image_paths, desc=f"Full YOLO test {seq_name}"):
+            frame_id = int(image_path.stem)
+            full_detections[frame_id] = run_yolo_on_frame(
+                yolo_model,
+                image_path,
+                confidence_thresh=0.25,
+            )
+
+        save_json(
+            full_detections,
+            output_dir / f"{seq_name}_full_yolo_detections.json",
+        )
 
 if __name__ == "__main__":
     main()

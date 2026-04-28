@@ -33,40 +33,14 @@ def box_iou(box_a, box_b):
     return inter / union if union > 0 else 0.0
 
 
-def match_detections(base_dets, pred_dets, iou_thresh=0.5, match_class=True):
-    tp = 0
-    fn = 0
-    matched_pred = set()
-    conf_drops = []
+def nearest_kept(frame_id, kept_frames):
+    kept = np.array(sorted(kept_frames))
+    idx = np.searchsorted(kept, frame_id)
 
-    for base in base_dets:
-        best_iou = 0.0
-        best_j = None
+    prev_frame = int(kept[idx - 1]) if idx > 0 else None
+    next_frame = int(kept[idx]) if idx < len(kept) else None
 
-        for j, pred in enumerate(pred_dets):
-            if j in matched_pred:
-                continue
-
-            if match_class and base.get("cls") != pred.get("cls"):
-                continue
-
-            score = box_iou(base["bbox"], pred["bbox"])
-
-            if score > best_iou:
-                best_iou = score
-                best_j = j
-
-        if best_iou >= iou_thresh:
-            tp += 1
-            matched_pred.add(best_j)
-
-            if "conf" in base and "conf" in pred_dets[best_j]:
-                conf_drops.append(base["conf"] - pred_dets[best_j]["conf"])
-        else:
-            fn += 1
-
-    fp = len(pred_dets) - len(matched_pred)
-    return tp, fp, fn, conf_drops
+    return prev_frame, next_frame
 
 
 def summarize(tp, fp, fn, conf_drops):
@@ -85,9 +59,47 @@ def summarize(tp, fp, fn, conf_drops):
     }
 
 
+def match_detections(base_dets, pred_dets, iou_thresh=0.5, match_class=True):
+    tp = 0
+    fn = 0
+    matched_pred = set()
+    conf_drops = []
+
+    for base in base_dets:
+        best_iou = 0.0
+        best_j = None
+        best_pred = None
+
+        for j, pred in enumerate(pred_dets):
+            if j in matched_pred:
+                continue
+
+            if match_class and base.get("cls") != pred.get("cls"):
+                continue
+
+            score = box_iou(base["bbox"], pred["bbox"])
+
+            if score > best_iou:
+                best_iou = score
+                best_j = j
+                best_pred = pred
+
+        if best_iou >= iou_thresh:
+            tp += 1
+            matched_pred.add(best_j)
+
+            if "conf" in base and "conf" in best_pred:
+                conf_drops.append(base["conf"] - best_pred["conf"])
+        else:
+            fn += 1
+
+    fp = len(pred_dets) - len(matched_pred)
+    return tp, fp, fn, conf_drops
+
+
 def evaluate_keep_frames_only(
-    baseline_dets,
-    reduced_dets,
+    baseline,
+    reduced,
     kept_frames,
     iou_thresh=0.5,
     match_class=True,
@@ -96,8 +108,8 @@ def evaluate_keep_frames_only(
     conf_drops = []
 
     for frame_id in sorted(kept_frames):
-        base = baseline_dets.get(frame_id, [])
-        pred = reduced_dets.get(frame_id, [])
+        base = baseline.get(frame_id, [])
+        pred = reduced.get(frame_id, [])
 
         t, f, n, drops = match_detections(
             base,
@@ -114,36 +126,22 @@ def evaluate_keep_frames_only(
     return summarize(tp, fp, fn, conf_drops)
 
 
-def nearest_kept_frames(frame_id, kept_frames_sorted):
-    kept = np.array(kept_frames_sorted)
-    idx = np.searchsorted(kept, frame_id)
-
-    prev_frame = int(kept[idx - 1]) if idx > 0 else None
-    next_frame = int(kept[idx]) if idx < len(kept) else None
-
-    return prev_frame, next_frame
-
-
 def evaluate_adaptive_temporal(
-    baseline_dets,
-    reduced_dets,
+    baseline,
+    reduced,
     kept_frames,
     iou_thresh=0.5,
     match_class=True,
     max_temporal_gap=5,
 ):
-    kept_frames = set(kept_frames)
-    kept_frames_sorted = sorted(kept_frames)
-
     tp = fp = fn = 0
     conf_drops = []
 
-    # Track whether each reduced detection was used at least once
-    # This is only for FP counting, not for blocking future matches.
+    kept_frames = set(kept_frames)
     used_reduced_at_least_once = set()
 
-    for frame_id in sorted(baseline_dets.keys()):
-        base_dets = baseline_dets.get(frame_id, [])
+    for frame_id in sorted(baseline.keys()):
+        base_dets = baseline.get(frame_id, [])
 
         if not base_dets:
             continue
@@ -153,7 +151,7 @@ def evaluate_adaptive_temporal(
         if frame_id in kept_frames:
             candidate_frames.append(frame_id)
         else:
-            prev_frame, next_frame = nearest_kept_frames(frame_id, kept_frames_sorted)
+            prev_frame, next_frame = nearest_kept(frame_id, kept_frames)
 
             if prev_frame is not None and abs(frame_id - prev_frame) <= max_temporal_gap:
                 candidate_frames.append(prev_frame)
@@ -164,18 +162,15 @@ def evaluate_adaptive_temporal(
         candidate_preds = []
 
         for candidate_frame in candidate_frames:
-            for det_idx, det in enumerate(reduced_dets.get(candidate_frame, [])):
+            for det_idx, det in enumerate(reduced.get(candidate_frame, [])):
                 candidate_preds.append(
                     {
                         **det,
-                        "_source_frame": candidate_frame,
-                        "_source_idx": det_idx,
+                        "_frame": candidate_frame,
+                        "_idx": det_idx,
                     }
                 )
 
-        # Important:
-        # Only prevent duplicate matching within the SAME baseline frame.
-        # Do NOT block reuse across different frames.
         used_within_this_frame = set()
 
         for base in base_dets:
@@ -184,7 +179,7 @@ def evaluate_adaptive_temporal(
             best_pred = None
 
             for pred in candidate_preds:
-                key = (pred["_source_frame"], pred["_source_idx"])
+                key = (pred["_frame"], pred["_idx"])
 
                 if key in used_within_this_frame:
                     continue
@@ -209,11 +204,9 @@ def evaluate_adaptive_temporal(
             else:
                 fn += 1
 
-    # FP = reduced detections that never matched any baseline detection
-    for frame_id, dets in reduced_dets.items():
+    for frame_id, dets in reduced.items():
         for det_idx, _ in enumerate(dets):
-            key = (frame_id, det_idx)
-            if key not in used_reduced_at_least_once:
+            if (frame_id, det_idx) not in used_reduced_at_least_once:
                 fp += 1
 
     return summarize(tp, fp, fn, conf_drops)
@@ -221,8 +214,9 @@ def evaluate_adaptive_temporal(
 
 def evaluate_sequence(
     seq_name,
+    k,
     full_yolo_dir,
-    reduced_yolo_dir,
+    kframe_yolo_dir,
     kept_frames_dir,
     output_dir,
     iou_thresh=0.5,
@@ -230,17 +224,8 @@ def evaluate_sequence(
     match_class=True,
 ):
     baseline_path = full_yolo_dir / f"{seq_name}_full_yolo_detections.json"
-    reduced_path = reduced_yolo_dir / f"{seq_name}_reduced_yolo_detections.json"
-    kept_path = kept_frames_dir / f"{seq_name}_kept_frames.json"
-
-    if not baseline_path.exists():
-        raise FileNotFoundError(f"Missing baseline detections: {baseline_path}")
-
-    if not reduced_path.exists():
-        raise FileNotFoundError(f"Missing reduced detections: {reduced_path}")
-
-    if not kept_path.exists():
-        raise FileNotFoundError(f"Missing kept frames: {kept_path}")
+    reduced_path = kframe_yolo_dir / f"{seq_name}_k{k}_reduced_yolo_detections.json"
+    kept_path = kept_frames_dir / f"{seq_name}_k{k}_kept_frames.json"
 
     baseline = normalize_frame_dict(load_json(baseline_path))
     reduced = normalize_frame_dict(load_json(reduced_path))
@@ -268,6 +253,7 @@ def evaluate_sequence(
 
     result = {
         "sequence": seq_name,
+        "k": k,
         "keep_frame_only": keep_eval,
         "adaptive_temporal": temporal_eval,
         "num_frames": num_frames,
@@ -279,31 +265,26 @@ def evaluate_sequence(
         "match_class": match_class,
     }
 
-    output_path = output_dir / f"{seq_name}_reduced_detection_eval.json"
-    save_json(result, output_path)
-
+    save_json(result, output_dir / f"{seq_name}_k{k}_detection_eval.json")
     return result
 
 
-def aggregate_results(sequence_results):
-    def sum_metric(section, key):
-        return sum(r[section][key] for r in sequence_results)
+def aggregate_results(results):
+    keep_tp = sum(r["keep_frame_only"]["tp"] for r in results)
+    keep_fp = sum(r["keep_frame_only"]["fp"] for r in results)
+    keep_fn = sum(r["keep_frame_only"]["fn"] for r in results)
 
-    keep_tp = sum_metric("keep_frame_only", "tp")
-    keep_fp = sum_metric("keep_frame_only", "fp")
-    keep_fn = sum_metric("keep_frame_only", "fn")
+    temp_tp = sum(r["adaptive_temporal"]["tp"] for r in results)
+    temp_fp = sum(r["adaptive_temporal"]["fp"] for r in results)
+    temp_fn = sum(r["adaptive_temporal"]["fn"] for r in results)
 
-    temporal_tp = sum_metric("adaptive_temporal", "tp")
-    temporal_fp = sum_metric("adaptive_temporal", "fp")
-    temporal_fn = sum_metric("adaptive_temporal", "fn")
-
-    total_frames = sum(r["num_frames"] for r in sequence_results)
-    total_kept = sum(r["num_kept_frames"] for r in sequence_results)
+    total_frames = sum(r["num_frames"] for r in results)
+    total_kept = sum(r["num_kept_frames"] for r in results)
 
     return {
         "keep_frame_only": summarize(keep_tp, keep_fp, keep_fn, []),
-        "adaptive_temporal": summarize(temporal_tp, temporal_fp, temporal_fn, []),
-        "num_sequences": len(sequence_results),
+        "adaptive_temporal": summarize(temp_tp, temp_fp, temp_fn, []),
+        "num_sequences": len(results),
         "num_frames": total_frames,
         "num_kept_frames": total_kept,
         "yolo_run_rate": total_kept / total_frames if total_frames > 0 else 0.0,
@@ -312,10 +293,12 @@ def aggregate_results(sequence_results):
 
 
 def main():
+    k = 5
+
     full_yolo_dir = Path("outputs/full_yolo_baseline_gt/json")
-    reduced_yolo_dir = Path("outputs/adaptive_inference_gt/reduced_yolo_json")
-    kept_frames_dir = Path("outputs/adaptive_inference_gt/kept_frames")
-    output_dir = Path("outputs/adaptive_inference_gt/reduced_detection_eval")
+    kframe_yolo_dir = Path("outputs/kframe_yolo_gt/reduced_yolo_json")
+    kept_frames_dir = Path("outputs/kframe_yolo_gt/kept_frames")
+    output_dir = Path("outputs/kframe_yolo_gt/evaluation")
 
     iou_thresh = 0.5
     max_temporal_gap = 5
@@ -331,15 +314,16 @@ def main():
         "MOT17-13-FRCNN",
     ]
 
-    sequence_results = []
+    results = []
 
     for seq_name in sequences:
-        print(f"\nEvaluating {seq_name}")
+        print(f"\nEvaluating {seq_name} k={k}")
 
         result = evaluate_sequence(
             seq_name=seq_name,
+            k=k,
             full_yolo_dir=full_yolo_dir,
-            reduced_yolo_dir=reduced_yolo_dir,
+            kframe_yolo_dir=kframe_yolo_dir,
             kept_frames_dir=kept_frames_dir,
             output_dir=output_dir,
             iou_thresh=iou_thresh,
@@ -347,18 +331,17 @@ def main():
             match_class=match_class,
         )
 
-        sequence_results.append(result)
-
+        results.append(result)
         print(json.dumps(result, indent=2))
 
-    aggregate = aggregate_results(sequence_results)
+    aggregate = aggregate_results(results)
 
     save_json(
         {
-            "per_sequence": sequence_results,
+            "per_sequence": results,
             "aggregate": aggregate,
         },
-        output_dir / "all_sequences_reduced_detection_eval.json",
+        output_dir / f"all_sequences_k{k}_detection_eval.json",
     )
 
     print("\nAggregate results:")
@@ -366,22 +349,24 @@ def main():
 
     # test dataset
     full_yolo_dir = Path("outputs/test/full_yolo_baseline/json")
-    reduced_yolo_dir = Path("outputs/test/adaptive_inference_gt/reduced_yolo_json")
-    kept_frames_dir = Path("outputs/test/adaptive_inference_gt/kept_frames")
-    output_dir = Path("outputs/test/adaptive_inference_gt/reduced_detection_eval")
+    kframe_yolo_dir = Path("outputs/test/kframe_yolo/reduced_yolo_json")
+    kept_frames_dir = Path("outputs/test/kframe_yolo/kept_frames")
+    output_dir = Path("outputs/test/kframe_yolo/evaluation")
 
     base_dir = Path("data/raw/MOT17/test")
     sequences = sorted([p.name for p in base_dir.iterdir() if p.is_dir() and "FRCNN" in p.name])
+    print(sequences)
 
-    sequence_results = []
+    results = []
 
     for seq_name in sequences:
-        print(f"\nEvaluating RF adaptive test sequence {seq_name}")
+        print(f"\nEvaluating {seq_name} k={k}")
 
         result = evaluate_sequence(
             seq_name=seq_name,
+            k=k,
             full_yolo_dir=full_yolo_dir,
-            reduced_yolo_dir=reduced_yolo_dir,
+            kframe_yolo_dir=kframe_yolo_dir,
             kept_frames_dir=kept_frames_dir,
             output_dir=output_dir,
             iou_thresh=iou_thresh,
@@ -389,20 +374,20 @@ def main():
             match_class=match_class,
         )
 
-        sequence_results.append(result)
+        results.append(result)
         print(json.dumps(result, indent=2))
 
-    aggregate = aggregate_results(sequence_results)
+    aggregate = aggregate_results(results)
 
     save_json(
         {
-            "per_sequence": sequence_results,
+            "per_sequence": results,
             "aggregate": aggregate,
         },
-        output_dir / "all_sequences_test_reduced_detection_eval.json",
+        output_dir / f"all_sequences_test_k{k}_detection_eval.json",
     )
 
-    print("\nAggregate RF adaptive test results:")
+    print("\nAggregate results:")
     print(json.dumps(aggregate, indent=2))
 
 

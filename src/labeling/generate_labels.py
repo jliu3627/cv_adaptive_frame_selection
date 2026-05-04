@@ -30,9 +30,9 @@ def generate_labels_for_sequence_from_gt(
     Generate frame-level keep/skip labels from MOT17 ground-truth annotations.
 
     keep = 1 if:
-      - count changed
-      - any ID appeared
-      - any ID disappeared
+      - object count changes by at least 2
+      - at least 2 IDs appeared
+      - at least 2 IDs disappeared
       - any shared ID moved significantly
     else keep = 0
     """
@@ -105,9 +105,9 @@ def generate_labels_for_sequence_from_gt(
         motion_flag = int(max_center_displacement > motion_threshold)
 
         # NOTE: tune label generation here
-        significant_count_change = int(abs(curr_count - prev_count) >= 1)
-        significant_appearance = int(len(appeared_ids) >= 1)
-        significant_disappearance = int(len(disappeared_ids) >= 1)
+        significant_count_change = int(abs(curr_count - prev_count) >= 2)
+        significant_appearance = int(len(appeared_ids) >= 2)
+        significant_disappearance = int(len(disappeared_ids) >= 2)
 
         # determine keep or skip frame
         keep = int(
@@ -157,7 +157,7 @@ def main():
         generate_labels_for_sequence_from_gt(
             gt_csv=gt_csv,
             output_csv=output_csv,
-            motion_threshold=20.0, # NOTE: tune motion parameter here
+            motion_threshold=25.0, # NOTE: tune motion parameter here
         )
         visualize_labels(
             sequence_dir=base_dir / seq_name,

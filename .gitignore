@@ -5,3 +5,5 @@ outputs/*
 data/*
 msml640/*
 *.pt
+
+!outputs/models

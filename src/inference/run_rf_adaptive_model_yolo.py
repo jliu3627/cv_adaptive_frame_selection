@@ -11,14 +11,52 @@ from tqdm import tqdm
 FEATURE_COLS = [
     "frame_diff_mean",
     "frame_diff_max",
+    "frame_diff_p90",
+    "frame_diff_p95",
+    "frame_diff_p99",
+    "changed_pixel_ratio_25",
+    "changed_pixel_ratio_50",
     "flow_mean",
     "flow_max",
     "flow_std",
+    "flow_p90",
+    "flow_p95",
+    "flow_p99",
+    "flow_top10_mean",
     "edge_diff_mean",
     "edge_density_prev",
     "edge_density_curr",
     "hist_bhattacharyya",
     "hist_corr",
+    "since_keep_frame_diff_mean",
+    "since_keep_frame_diff_max",
+    "since_keep_frame_diff_p90",
+    "since_keep_frame_diff_p95",
+    "since_keep_frame_diff_p99",
+    "since_keep_changed_pixel_ratio_25",
+    "since_keep_changed_pixel_ratio_50",
+    "since_keep_flow_mean",
+    "since_keep_flow_max",
+    "since_keep_flow_std",
+    "since_keep_flow_p90",
+    "since_keep_flow_p95",
+    "since_keep_flow_p99",
+    "since_keep_flow_top10_mean",
+    "since_keep_edge_diff_mean",
+    "since_keep_edge_density_prev",
+    "since_keep_edge_density_curr",
+    "since_keep_hist_bhattacharyya",
+    "since_keep_hist_corr",
+    "frames_since_last_keep",
+]
+
+HIGH_MOTION_FEATURES = [
+    "frame_diff_p95",
+    "flow_p95",
+    "flow_top10_mean",
+    "since_keep_frame_diff_p95",
+    "since_keep_flow_p95",
+    "since_keep_flow_top10_mean",
 ]
 
 
@@ -34,6 +72,11 @@ def compute_frame_difference(prev_gray, curr_gray):
     return {
         "frame_diff_mean": float(np.mean(diff)),
         "frame_diff_max": float(np.max(diff)),
+        "frame_diff_p90": float(np.percentile(diff, 90)),
+        "frame_diff_p95": float(np.percentile(diff, 95)),
+        "frame_diff_p99": float(np.percentile(diff, 99)),
+        "changed_pixel_ratio_25": float(np.mean(diff > 25)),
+        "changed_pixel_ratio_50": float(np.mean(diff > 50)),
     }
 
 
@@ -55,6 +98,10 @@ def compute_optical_flow_features(prev_gray, curr_gray):
         "flow_mean": float(np.mean(mag)),
         "flow_max": float(np.max(mag)),
         "flow_std": float(np.std(mag)),
+        "flow_p90": float(np.percentile(mag, 90)),
+        "flow_p95": float(np.percentile(mag, 95)),
+        "flow_p99": float(np.percentile(mag, 99)),
+        "flow_top10_mean": float(np.mean(mag[mag >= np.percentile(mag, 90)])),
     }
 
 
@@ -104,6 +151,24 @@ def extract_features_for_pair(prev_img_path: Path, curr_img_path: Path):
     features.update(compute_edge_difference(prev_gray, curr_gray))
     features.update(compute_histogram_difference(prev_gray, curr_gray))
     return features
+
+
+def prefix_features(features: dict, prefix: str):
+    return {f"{prefix}{key}": value for key, value in features.items()}
+
+
+def load_high_motion_thresholds(path: Path):
+    if not path.exists():
+        return {}
+    with open(path, "r") as f:
+        return json.load(f)
+
+
+def is_high_motion(features: dict, thresholds: dict):
+    for feature_name, threshold in thresholds.items():
+        if feature_name in features and features[feature_name] >= threshold:
+            return True
+    return False
 
 
 def run_yolo_on_frame(model, image_path: Path, confidence_thresh=0.25):
@@ -206,6 +271,7 @@ def run_adaptive_inference_for_sequence(
     keep_threshold=0.45,
     yolo_conf_thresh=0.25,
     max_skip_streak=5,
+    high_motion_thresholds=None,
 ):
     img_dir = sequence_dir / "img1"
     image_paths = sorted(img_dir.glob("*.jpg"))
@@ -221,8 +287,10 @@ def run_adaptive_inference_for_sequence(
     kept_frames = []
 
     prev_img_path = None
+    last_keep_img_path = None
     last_detections = []
     skip_streak = 0
+    high_motion_thresholds = high_motion_thresholds or {}
 
     for idx, curr_img_path in enumerate(
         tqdm(image_paths, desc=f"Adaptive {sequence_dir.name}")
@@ -249,6 +317,7 @@ def run_adaptive_inference_for_sequence(
                     "keep_probability": 1.0,
                     "yolo_ran": 1,
                     "forced_refresh": 1,
+                    "high_motion_override": 0,
                     "skip_streak_before": 0,
                     "num_detections": len(detections),
                 }
@@ -257,16 +326,28 @@ def run_adaptive_inference_for_sequence(
             detection_rows.extend(save_detection_rows(frame_id, detections, "yolo"))
 
             prev_img_path = curr_img_path
+            last_keep_img_path = curr_img_path
             continue
 
         features = extract_features_for_pair(prev_img_path, curr_img_path)
+        since_keep_features = prefix_features(
+            extract_features_for_pair(last_keep_img_path, curr_img_path),
+            "since_keep_",
+        )
+        features.update(since_keep_features)
+        features["frames_since_last_keep"] = skip_streak
         X_curr = pd.DataFrame([features])[FEATURE_COLS]
 
         keep_prob = float(rf_model.predict_proba(X_curr)[0][1])
         pred_label = int(keep_prob >= keep_threshold)
 
         forced_refresh = 0
+        high_motion_override = 0
         skip_streak_before = skip_streak
+
+        if is_high_motion(features, high_motion_thresholds):
+            pred_label = 1
+            high_motion_override = 1
 
         if skip_streak >= max_skip_streak:
             pred_label = 1
@@ -280,6 +361,7 @@ def run_adaptive_inference_for_sequence(
             )
 
             last_detections = detections
+            last_keep_img_path = curr_img_path
             yolo_ran = 1
             source = "yolo"
             skip_streak = 0
@@ -306,8 +388,10 @@ def run_adaptive_inference_for_sequence(
                 "keep_probability": keep_prob,
                 "yolo_ran": yolo_ran,
                 "forced_refresh": forced_refresh,
+                "high_motion_override": high_motion_override,
                 "skip_streak_before": skip_streak_before,
                 "num_detections": len(detections),
+                **features,
             }
         )
 
@@ -334,15 +418,16 @@ def run_adaptive_inference_for_sequence(
 
 
 def main():
-    base_dir = Path("data/raw/MOT17/train")
     model_path = Path("outputs/models/random_forest/random_forest_gt_model.joblib")
+    high_motion_thresholds = load_high_motion_thresholds(
+        Path("outputs/models/random_forest/high_motion_thresholds.json")
+    )
 
+    base_dir = Path("data/raw/MOT17/train")
     output_dir = Path("outputs/adaptive_inference_gt")
 
     decisions_dir = output_dir / "decisions"
     detections_dir = output_dir / "detections"
-
-    # NEW
     reduced_json_dir = output_dir / "reduced_yolo_json"
     kept_frames_dir = output_dir / "kept_frames"
 
@@ -364,8 +449,6 @@ def main():
 
         decisions_output_csv = decisions_dir / f"{seq_name}_decisions.csv"
         detections_output_csv = detections_dir / f"{seq_name}_adaptive_detections.csv"
-
-        # NEW
         reduced_json_output = reduced_json_dir / f"{seq_name}_reduced_yolo_detections.json"
         kept_frames_output = kept_frames_dir / f"{seq_name}_kept_frames.json"
 
@@ -380,6 +463,7 @@ def main():
             keep_threshold=0.45,
             yolo_conf_thresh=0.25,
             max_skip_streak=5,
+            high_motion_thresholds=high_motion_thresholds,
         )
 
     # test dataset
@@ -417,6 +501,7 @@ def main():
             keep_threshold=0.45,
             yolo_conf_thresh=0.25,
             max_skip_streak=5,
+            high_motion_thresholds=high_motion_thresholds,
         )
 
 if __name__ == "__main__":

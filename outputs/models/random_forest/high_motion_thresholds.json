@@ -1,0 +1,8 @@
+{
+    "frame_diff_p95": 63.0,
+    "flow_p95": 12.864812221527094,
+    "flow_top10_mean": 14.672184181213382,
+    "since_keep_frame_diff_p95": 130.0,
+    "since_keep_flow_p95": 30.4054429244995,
+    "since_keep_flow_top10_mean": 33.415540313720705
+}

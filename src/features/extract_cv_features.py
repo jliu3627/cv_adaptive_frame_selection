@@ -18,6 +18,11 @@ def compute_frame_difference(prev_gray: np.ndarray, curr_gray: np.ndarray):
     return {
         "frame_diff_mean": float(np.mean(diff)),
         "frame_diff_max": float(np.max(diff)),
+        "frame_diff_p90": float(np.percentile(diff, 90)),
+        "frame_diff_p95": float(np.percentile(diff, 95)),
+        "frame_diff_p99": float(np.percentile(diff, 99)),
+        "changed_pixel_ratio_25": float(np.mean(diff > 25)),
+        "changed_pixel_ratio_50": float(np.mean(diff > 50)),
     }
 
 
@@ -40,6 +45,10 @@ def compute_optical_flow_features(prev_gray: np.ndarray, curr_gray: np.ndarray):
         "flow_mean": float(np.mean(mag)),
         "flow_max": float(np.max(mag)),
         "flow_std": float(np.std(mag)),
+        "flow_p90": float(np.percentile(mag, 90)),
+        "flow_p95": float(np.percentile(mag, 95)),
+        "flow_p99": float(np.percentile(mag, 99)),
+        "flow_top10_mean": float(np.mean(mag[mag >= np.percentile(mag, 90)])),
     }
 
 
@@ -94,6 +103,10 @@ def extract_features_for_pair(prev_img_path: Path, curr_img_path: Path):
     return features
 
 
+def prefix_features(features: dict, prefix: str):
+    return {f"{prefix}{key}": value for key, value in features.items()}
+
+
 def extract_features_for_sequence(
     sequence_dir: Path,
     labels_csv: Path,
@@ -122,6 +135,8 @@ def extract_features_for_sequence(
     }
 
     rows = []
+    last_keep_img_path = image_paths[0]
+    frames_since_last_keep = 0
 
     # image features
     for i in tqdm(range(1, len(image_paths)), desc=f"Features {sequence_dir.name}"):
@@ -134,12 +149,19 @@ def extract_features_for_sequence(
             continue
 
         features = extract_features_for_pair(prev_img_path, curr_img_path)
+        since_keep_features = prefix_features(
+            extract_features_for_pair(last_keep_img_path, curr_img_path),
+            "since_keep_",
+        )
         label_row = label_lookup[curr_frame]
+        label = int(label_row["label"])
 
         row = {
             "frame": curr_frame,
             **features,
-            "label": int(label_row["label"]),
+            **since_keep_features,
+            "frames_since_last_keep": frames_since_last_keep,
+            "label": label,
         }
 
         # NOTE: columns from label generation
@@ -162,6 +184,12 @@ def extract_features_for_sequence(
                 row[col] = label_row[col]
 
         rows.append(row)
+
+        if label == 1:
+            last_keep_img_path = curr_img_path
+            frames_since_last_keep = 0
+        else:
+            frames_since_last_keep += 1
 
     features_df = pd.DataFrame(rows)
     output_csv.parent.mkdir(parents=True, exist_ok=True)

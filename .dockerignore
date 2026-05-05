@@ -1,0 +1,35 @@
+venv/
+.venv/
+msml640/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.git/
+.gitignore
+.ipynb_checkpoints/
+
+# Remove generated bulky outputs from Docker image.
+outputs/*
+
+# Keep latest trained model artifacts.
+!outputs/
+!outputs/models/
+!outputs/models/random_forest_all_variants/
+!outputs/models/random_forest_all_variants/**
+
+# Include only MOT17 sequence 02 for all three detector variants.
+# This makes Docker self-contained while avoiding the huge full MOT17 dataset.
+data/raw/MOT17/test/
+data/raw/MOT17/train/*
+!data/raw/MOT17/train/MOT17-02-DPM/
+!data/raw/MOT17/train/MOT17-02-DPM/**
+!data/raw/MOT17/train/MOT17-02-FRCNN/
+!data/raw/MOT17/train/MOT17-02-FRCNN/**
+!data/raw/MOT17/train/MOT17-02-SDP/
+!data/raw/MOT17/train/MOT17-02-SDP/**
+
+# Recreate these during execution.
+data/interim/
+data/processed/

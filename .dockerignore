@@ -16,6 +16,8 @@ outputs/*
 # Keep latest trained model artifacts.
 !outputs/
 !outputs/models/
+!outputs/models/random_forest/
+!outputs/models/random_forest/**
 !outputs/models/random_forest_all_variants/
 !outputs/models/random_forest_all_variants/**
 

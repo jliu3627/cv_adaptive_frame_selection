@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model-path",
         type=str,
-        default="outputs/models/random_forest_all_variants/random_forest_gt_model.joblib",
+        default="outputs/models/random_forest/random_forest_gt_model.joblib",
         help="Path to saved Random Forest model.",
     )
 
